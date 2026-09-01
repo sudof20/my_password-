@@ -1,5 +1,3 @@
-# my_password-
-
 # My Password Vault
 
 A secure password management application designed to run smoothly on mobile devices.
