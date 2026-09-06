@@ -4,17 +4,17 @@ A secure password management application designed to run smoothly on mobile devi
 
 ---
 
-## 🛠️ Known Issues & Bugs
-- **PIN Lock Bypass Issue:** Canceling or bypassing the initial 4-digit PIN input prompt opens the vault directly without authentication.
-- **Data Persistence Issue:** Data is not being saved properly after clicking the "Save" button inside the vault.
-- **Language Consistency:** UI text elements need to be fully translated into English.
+## 🛠️ Security and reliability
+- **PIN protection:** Existing vaults require a valid PIN before the vault can be opened. Closing or canceling the PIN prompt leaves the vault locked.
+- **Data persistence:** Vault writes are encrypted and committed atomically to reduce the risk of losing data during an interrupted save.
+- **Language consistency:** UI labels, prompts, warnings, and recovery instructions are in English.
 
 ---
 
 ## 🚀 Upcoming Updates & Roadmap
-- [ ] Fix the 4-digit PIN authentication check on startup to block unauthorized access.
-- [ ] Fix local storage / database save operation on the "Save" button action.
-- [ ] Convert all UI labels, prompts, and system messages to English.
+- [x] Require PIN authentication before opening an existing vault.
+- [x] Persist vault changes reliably when saving.
+- [x] Convert all UI labels, prompts, and system messages to English.
 - [ ] Enhance mobile responsiveness and touch interactions for android/iOS screens.
 
 ---

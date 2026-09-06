@@ -8,6 +8,7 @@ import secrets
 import hashlib
 import base64
 import time
+import tempfile
 from datetime import datetime, timedelta
 from tkinter import messagebox, filedialog
 from cryptography.fernet import Fernet
@@ -148,9 +149,10 @@ class PasswordVault:
         return True
 
     def save_vault(self):
-        """সংরক্ষণ করার সময় ত্রুটি থাকলে তা রেইজ করবে"""
+        """Persist the encrypted vault atomically so interrupted writes do not corrupt it."""
         if not self.salt:
             return
+        temp_path = None
         try:
             data = {
                 "salt": base64.b64encode(self.salt).decode(),
@@ -165,10 +167,18 @@ class PasswordVault:
             elif self._encrypted_blob:
                 data["encrypted_data"] = self._encrypted_blob
 
-            with open(self.vault_file, "wb") as f:
+            vault_dir = os.path.dirname(os.path.abspath(self.vault_file))
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=vault_dir, prefix=".password_vault-", suffix=".tmp", delete=False
+            ) as f:
+                temp_path = f.name
                 f.write(json.dumps(data).encode())
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, self.vault_file)
         except Exception as e:
-            # ত্রুটি উপরে পাঠিয়ে দিচ্ছি, যাতে ব্যবহারকারী দেখতে পারে
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
             raise Exception(f"Vault save failed: {str(e)}")
 
     def load_vault(self):
@@ -205,7 +215,7 @@ class PasswordVault:
             "expiry": (datetime.now() + timedelta(days=expiry_days)).strftime("%Y-%m-%d") if expiry_days > 0 else ""
         }
         self.passwords.append(entry)
-        self.save_vault()   # এখানেও ত্রুটি ছড়াতে পারে
+        self.save_vault()
         return True
 
     def get_all(self):
@@ -228,7 +238,7 @@ class PasswordGeneratorApp:
         self.vault = PasswordVault()
         self.vault_unlocked = False
         self.current_theme = "dark"
-        self.current_tab = "Generator"
+        self.current_tab = "🔑 Generator"
         self.last_activity = datetime.now()
         self.clipboard_clear_after = 30
         self.recent_platforms = []
@@ -241,6 +251,7 @@ class PasswordGeneratorApp:
             self.show_setup_vault()
         else:
             self.update_saved_display()
+            self.window.after(0, lambda: self.unlock_vault_with_pin(startup=True))
 
     def center_window(self):
         self.window.update_idletasks()
@@ -291,7 +302,7 @@ class PasswordGeneratorApp:
 
     def show_recovery_key_screen(self, recovery_key: str):
         win = ctk.CTkToplevel(self.window)
-        win.title("⚠️ Recovery Key - খুবই গুরুত্বপূর্ণ")
+        win.title("⚠️ Recovery Key - Important")
         win.geometry("560x520")
         win.resizable(False, False)
         win.transient(self.window)
@@ -307,7 +318,7 @@ class PasswordGeneratorApp:
                      text_color="#ff4444").pack(pady=(20, 5))
 
         ctk.CTkLabel(win,
-                     text="এই Key টি অত্যন্ত গুরুত্বপূর্ণ!\nMaster Password ভুলে গেলে শুধু এই Key দিয়েই\nআপনার সব পাসওয়ার্ড ফেরত পাওয়া যাবে।",
+                     text="This key is extremely important!\nIf you forget your master PIN, only this key\ncan recover your passwords.",
                      font=ctk.CTkFont(size=14),
                      justify="center").pack(pady=5)
 
@@ -329,11 +340,11 @@ class PasswordGeneratorApp:
         copy_btn.pack(pady=5)
 
         warning_text = (
-            "• এই Key কোথাও অনলাইনে সেভ করবেন না\n"
-            "• কাগজে লিখে বা প্রিন্ট করে সুরক্ষিত জায়গায় রাখুন\n"
-            "• কেউকে এই Key দিবেন না\n"
-            "• Key হারিয়ে গেলে সব পাসওয়ার্ড চিরতরে হারিয়ে যাবে\n"
-            "• এই স্ক্রিন বন্ধ করার পর Key আর দেখানো হবে না"
+            "• Do not store this key online\n"
+            "• Write it down or print it and keep it somewhere secure\n"
+            "• Never share this key\n"
+            "• If you lose this key, your passwords cannot be recovered\n"
+            "• This key will not be shown again after closing this screen"
         )
         ctk.CTkLabel(win, text=warning_text,
                      font=ctk.CTkFont(size=13),
@@ -341,16 +352,16 @@ class PasswordGeneratorApp:
                      justify="left").pack(pady=10)
 
         def confirm_saved():
-            if messagebox.askyesno("নিশ্চিত করুন",
-                                   "আপনি কি Recovery Key টি সঠিকভাবে সেভ করেছেন?\n\n"
-                                   "এই Key ছাড়া পরে আর কোনোভাবে পাসওয়ার্ড ফেরত পাওয়া যাবে না。"):
+            if messagebox.askyesno("Confirm",
+                                   "Have you saved the recovery key securely?\n\n"
+                                   "Without this key, your passwords cannot be recovered later."):
                 win.destroy()
                 self.status_label.configure(
-                    text="🔐 Vault তৈরি হয়েছে • Recovery Key সেভ করে রাখুন",
+                    text="🔐 Vault created • Keep your recovery key safe",
                     text_color="#44ff44"
                 )
 
-        ctk.CTkButton(win, text="✅ আমি Key সেভ করেছি", width=240, height=45,
+        ctk.CTkButton(win, text="✅ I saved the key", width=240, height=45,
                       font=ctk.CTkFont(size=14, weight="bold"),
                       command=confirm_saved).pack(pady=15)
 
@@ -365,12 +376,12 @@ class PasswordGeneratorApp:
         ctk.CTkLabel(win, text="🔑 Recover with Recovery Key",
                      font=ctk.CTkFont(size=18, weight="bold")).pack(pady=15)
 
-        ctk.CTkLabel(win, text="আপনার Recovery Key দিন").pack()
+        ctk.CTkLabel(win, text="Enter your recovery key").pack()
         rec_entry = ctk.CTkEntry(win, placeholder_text="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX",
                                  width=320, height=40)
         rec_entry.pack(pady=8)
 
-        ctk.CTkLabel(win, text="নতুন Master Password সেট করুন").pack(pady=(10, 0))
+        ctk.CTkLabel(win, text="Set a new master PIN").pack(pady=(10, 0))
         new_pw = ctk.CTkEntry(win, placeholder_text="New master PIN (1-4 digits)", show="*", width=320, height=38)
         new_pw.pack(pady=5)
         conf_pw = ctk.CTkEntry(win, placeholder_text="Confirm new PIN", show="*", width=320, height=38)
@@ -411,7 +422,7 @@ class PasswordGeneratorApp:
         self.password_visible = False
         self.update_saved_display()
 
-    def unlock_vault_with_pin(self, callback=None):
+    def unlock_vault_with_pin(self, callback=None, startup=False):
         """Vault unlock – used only when entering Vault tab"""
         if self.vault_unlocked:
             if callback:
@@ -461,6 +472,18 @@ class PasswordGeneratorApp:
         ctk.CTkButton(win, text="Forgot PIN? Use Recovery Key",
                       fg_color="transparent", text_color="#88aaff",
                       command=lambda: [win.destroy(), self.show_recovery_flow()]).pack(pady=5)
+
+        def cancel():
+            win.destroy()
+            if not self.vault_unlocked:
+                self.tabview.set("🔑 Generator")
+                self.current_tab = "🔑 Generator"
+                self.status_label.configure(
+                    text="Vault remains locked until the PIN is verified",
+                    text_color="#ffaa00"
+                )
+
+        win.protocol("WM_DELETE_WINDOW", cancel)
 
     def on_tab_change(self):
         current = self.tabview.get()
@@ -718,7 +741,7 @@ class PasswordGeneratorApp:
             self.strength_label.configure(text="💪 Excellent", text_color="#00ff88")
             self.strength_feedback.configure(text="Excellent security")
 
-    # ==================== Eye Icon – কোনো PIN লাগবে না ====================
+    # ==================== Eye Icon ====================
     def toggle_visibility(self):
         pw = self.password_var.get()
         if not pw or pw == "Click Generate":
@@ -740,7 +763,7 @@ class PasswordGeneratorApp:
             self.password_visible = False
             self.status_label.configure(text="Password hidden (10s expired)", text_color="#ffaa00")
 
-    # ==================== Copy Button – কোনো PIN লাগবে না ====================
+    # ==================== Copy Button ====================
     def copy_password(self):
         pw = self.password_var.get()
         if not pw or pw == "Click Generate":
@@ -752,14 +775,13 @@ class PasswordGeneratorApp:
         self.window.after(2000, lambda: self.copy_btn.configure(text="📋 Copy"))
         self.window.after(self.clipboard_clear_after * 1000, lambda: pyperclip.copy(""))
 
-    # ==================== Save to Vault – শুধু এখানে PIN চাইবে এবং ভল্ট আনলক হবে না ====================
+    # ==================== Save to Vault ====================
     def save_to_vault(self):
         pw = self.password_var.get()
         if not pw or pw == "Click Generate":
             messagebox.showinfo("Info", "Generate a password first")
             return
 
-        # সেভ করার কাজ (PIN সঠিক হলে কল হবে)
         def do_save():
             try:
                 username = self.username_var.get() or "user"
@@ -776,7 +798,6 @@ class PasswordGeneratorApp:
             except Exception as e:
                 messagebox.showerror("Save Error", f"Failed to save password:\n{str(e)}")
 
-        # PIN চাওয়ার উইন্ডো
         win = ctk.CTkToplevel(self.window)
         win.title("🔐 Save Password")
         win.geometry("380x220")
@@ -801,7 +822,9 @@ class PasswordGeneratorApp:
                 return
 
             try:
-                if self.vault.verify_pin(pin):
+                if self.vault.verify_and_unlock(pin):
+                    self.vault_unlocked = True
+                    self.vault_status_label.configure(text="🔓 Unlocked", text_color="#44ff44")
                     win.destroy()
                     do_save()
                 else:
@@ -815,7 +838,7 @@ class PasswordGeneratorApp:
                       font=ctk.CTkFont(size=14, weight="bold")).pack(pady=8)
         entry.bind("<Return>", lambda e: check())
 
-    # ==================== বাকি সব মেথড আগের মতোই ====================
+    # ==================== Vault display ====================
     def update_saved_display(self):
         for w in self.saved_frame.winfo_children():
             w.destroy()
